@@ -1,7 +1,9 @@
 
+
+
 pip install fastapi uvicorn jinja2 python-multipart pandas matplotlib natsort
 
-# Merlion 関連のインポート
+# Merlion 対応中止
 
 # powershell
 

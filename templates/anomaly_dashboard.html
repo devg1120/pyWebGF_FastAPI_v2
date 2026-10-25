@@ -23,15 +23,44 @@
 
     <div class="header-area">
         <h1>🧠 Merlion 異常検知トラフィックモニター</h1>
+	<!--
         <a href="/" class="back-link">← 通常モニターに戻る</a>
+	-->
+	<a href="/?base_id={{ selected_base_id }}">← 通常モニターに戻る</a>
     </div>
+
+<!-- 💡 タイトルヘッダーの周辺（お好みの位置に配置してください） -->
+<header style="margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid #ccc;">
+    
+    <!-- 👈 💡 現在のBASE_DIRパスを分かりやすく表示するパーツ -->
+    <div style="display: inline-block; background-color: #e2e8f0; color: #4a5568; padding: 4px 10px; border-radius: 6px; font-family: monospace; font-size: 14px;">
+        📁 現在のデータソース: <strong>{{ actual_base_dir }}</strong>
+    </div>
+</header>
+
     
     <!-- 条件指定フォーム -->
     <div class="search-box">
         <form method="GET" action="/anomaly_dashboard">
+<!--
             <label>対象スイッチ名:</label>
-            <!-- 任意のスイッチ名を手入力、または初期値を設定できるように text 型に変更して安定化 -->
             <input type="text" name="switch" value="{{ selected_switch or 'switch1' }}" placeholder="例: switch1" required>
+-->
+
+    <input type="hidden" name="base_id" value="{{ selected_base_id }}">
+<label for="switch_select">対象スイッチ名:</label>
+<select name="switch" id="switch_select" onchange="this.form.submit()">
+    <option value="">-- スイッチを選択してください --</option>
+    {% for ym, dd_list in date_tree.items() %}
+        {# 例として最新の日付（または全期間）の配下にあるスイッチを表示させるか、メイン画面と共通化します #}
+    {% endfor %}
+    
+    {# 💡 main.py から渡される利用可能なスイッチ一覧をループ処理 #}
+    {% for sw in available_switches %}
+        <option value="{{ sw }}" {% if sw == selected_switch %}selected{% endif %}>{{ sw }}</option>
+    {% endfor %}
+</select>
+
 
             <label>開始日:</label>
             <input type="date" name="start_dd" value="{{ selected_start_dd }}" required>
@@ -60,7 +89,7 @@
         <div class="graph-card">
             <!-- /plot_anomaly エンドポイントから生成された画像を非同期・並列ロード -->
 <!-- 💡 &logic={{ selected_logic }} を末尾に付与 -->
-<img src="/plot_anomaly?mode=range&start_dd={{ selected_start_dd }}&end_dd={{ selected_end_dd }}&switch={{ selected_switch }}&filename={{ filename }}&cols=2&start_hour={{ start_hour }}&end_hour={{ end_hour }}&logic={{ selected_logic }}" alt="グラフを生成中...">
+<img src="/plot_anomaly?mode=range&start_dd={{ selected_start_dd }}&end_dd={{ selected_end_dd }}&switch={{ selected_switch }}&filename={{ filename }}&cols=2&start_hour={{ start_hour }}&end_hour={{ end_hour }}&logic={{ selected_logic }}&base_id={{ selected_base_id }}" alt="グラフを生成中...">
 
             <p style="font-size: 14px; margin-top: 10px; font-weight: bold; color: #444;">📁 {{ filename }}</p>
         </div>

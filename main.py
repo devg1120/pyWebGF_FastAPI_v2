@@ -26,10 +26,10 @@ from fastapi.templating import Jinja2Templates
 from fastapi.concurrency import run_in_threadpool
 
 # Merlion 関連のインポート
-from merlion.utils import TimeSeries
-from merlion.models.anomaly.isolation_forest import IsolationForest, IsolationForestConfig
-from merlion.models.anomaly.stat_threshold import StatThreshold, StatThresholdConfig
-from merlion.post_process.threshold import AggregateAlarms
+#from merlion.utils import TimeSeries
+#from merlion.models.anomaly.isolation_forest import IsolationForest, IsolationForestConfig
+#from merlion.models.anomaly.stat_threshold import StatThreshold, StatThresholdConfig
+#from merlion.post_process.threshold import AggregateAlarms
 
 # ─── OS自動判定による日本語文字化け対策 ───
 matplotlib.use("Agg")
@@ -451,6 +451,35 @@ async def anomaly_dashboard(
     date_tree = get_date_tree(base_id) # 💡 引数追加
     csv_filenames = []
 
+    available_switches = []  # 💡 プルダウン用のスイッチリストを初期化
+
+    # ─── 💡 ディレクトリツリーから存在するスイッチ構造を動的に全スキャン ───
+    # 開始日が指定されている場合はその日を重点探索、無ければ直近の全データから重複なくスイッチ名を抽出
+    scan_date_dirs = []
+    if start_dd:
+        try:
+            p_date = pd.to_datetime(start_dd)
+            scan_date_dirs.append(os.path.join(actual_base, p_date.strftime("%Y%m"), p_date.strftime("%d")))
+            scan_date_dirs.append(os.path.join(actual_base, p_date.strftime("%Y%m"), str(p_date.day)))
+        except:
+            pass
+
+    # 指定がない、または見つからない場合は全体から直近のディレクトリを探索して補完
+    for ym, dds in date_tree.items():
+        if dds:
+            scan_date_dirs.append(os.path.join(actual_base, ym, dds[-1])) # 最新の日
+
+    # 実際に物理ディレクトリを覗いて配下のスイッチ名をリスト化
+    switch_set = set()
+    for d_dir in scan_date_dirs:
+        if os.path.exists(d_dir):
+            for d in glob.glob(os.path.join(d_dir, "*")):
+                if os.path.isdir(d):
+                    switch_set.add(os.path.basename(d))
+    available_switches = sorted(list(switch_set))
+    if not switch or switch not in available_switches:
+        switch = available_switches[0] if available_switches else ""
+
     if switch and start_dd:
         try:
             parsed_date = pd.to_datetime(start_dd)
@@ -485,7 +514,9 @@ async def anomaly_dashboard(
         context={
             "base_ids": list(BASE_DIRS.keys()),     # 💡 追加
             "selected_base_id": base_id,            # 💡 追加
+            "actual_base_dir": actual_base,   
             "date_tree": date_tree,
+            "available_switches": available_switches,
             "selected_start_dd": start_dd,
             "selected_end_dd": end_dd,
             "selected_switch": switch,
@@ -495,6 +526,161 @@ async def anomaly_dashboard(
             "csv_filenames": csv_filenames,
         }
     )
+
+
+@app.get("/plot_anomaly")
+async def plot_anomaly(
+    base_id: Optional[str] = None,
+    mode: str = "range", yyyymm: Optional[str] = None, dd: Optional[str] = None,
+    switch: Optional[str] = None, filename: Optional[str] = None, cols: int = 2,
+    start_hour: int = 8, end_hour: int = 18, start_dd: str = "", end_dd: str = "",
+    logic: str = "stat_threshold",
+):
+    actual_base = get_base_dir_path(base_id)
+
+    fig_size = (14, 4.0) if cols == 1 else (6, 2.8) if cols == 4 else (8, 3.0)
+    fig = Figure(figsize=fig_size)
+    ax = fig.subplots()
+
+    df_filtered = pd.DataFrame()
+
+    try:
+        df_list = []
+        if start_dd and end_dd:
+            dr = pd.date_range(start=start_dd, end=end_dd)
+            for d in dr:
+                file_path = os.path.join(actual_base, d.strftime("%Y%m"), d.strftime("%d"), switch, filename)
+                if os.path.exists(file_path):
+                    _df = await run_in_threadpool(pd.read_csv, file_path, engine="c")
+                    if not _df.empty:
+                        df_list.append(_df)
+
+            if df_list:
+                df = pd.concat(df_list, ignore_index=True)
+            else:
+                raise FileNotFoundError("データファイルが見つかりません。")
+
+            start_time = pd.to_datetime(start_dd) + pd.Timedelta(hours=start_hour)
+            end_time = pd.to_datetime(end_dd) + pd.Timedelta(hours=end_hour, minutes=55)
+            x_label_text = f"{start_dd} ～ {end_dd}"
+            x_tick_format = "%m/%d %H:%M"
+        else:
+            raise ValueError("期間指定が必要です。")
+
+        if len(df.columns) >= 6:
+            df.columns = ["日時", "INDEX", "NAME", "STATUS", "項目A", "項目B"] + list(df.columns[6:])
+        elif len(df.columns) >= 3:
+            df.columns = ["日時", "項目A", "項目B"] + list(df.columns[3:])
+
+        df["日時"] = pd.to_datetime(df["日時"], format="mixed", errors='coerce')
+        df = df.dropna(subset=["日時"])
+        df = df[(df["日時"] >= start_time) & (df["日時"] <= end_time)]
+        df = df.sort_values("日時").reset_index(drop=True)
+
+        time_diff_sec = df["日時"].diff().dt.total_seconds()
+        is_missing = time_diff_sec > 330
+
+        df["差分A"] = df["項目A"].diff().clip(lower=0)
+        df.loc[is_missing, "差分A"] = None  
+
+        df["bps_A"] = (df["差分A"] * 8) / 300
+        df = df.dropna(subset=["bps_A"]).reset_index(drop=True)
+
+        fig.set_facecolor("#f0f0f0")
+        ax.set_facecolor("#ffffff")
+
+        if not df.empty:
+            df = df[~df["日時"].duplicated(keep='first')].reset_index(drop=True)
+
+            max_points = 1000
+            if len(df) > max_points:
+                step = len(df) // max_points
+                df_filtered = df.iloc[::step].copy().reset_index(drop=True)
+            else:
+                df_filtered = df.copy()
+
+            # 通常のトラフィック線（緑色）をプロット
+            ax.plot(df_filtered.index, df_filtered["bps_A"], color="#006600", linewidth=0.8, label="In (bps)")
+            ax.fill_between(df_filtered.index, df_filtered["bps_A"], color="#00eb0c", alpha=0.4)
+
+            # ─── 🧠 Merlionを完全に代替するPandas/NumPy異常検知ロジック ───
+            anomalies = pd.DataFrame()
+
+            if logic == "stat_threshold":
+                title_prefix = "【異常検知: 直近急変重視】"
+                # トラフィックの「前5分からの変化量（絶対値）」を計算
+                df_filtered["diff_val"] = df_filtered["bps_A"].diff().abs().fillna(0)
+                # 統計的な上位1%の急変（しきい値）を算出し、一定の通信量(10Mbps)以上の変動を検知
+                threshold = df_filtered["diff_val"].quantile(0.99)
+                anomalies = df_filtered[(df_filtered["diff_val"] >= threshold) & (df_filtered["diff_val"] > 10_000_000)]
+
+            elif logic == "burst_detector":
+                title_prefix = "【異常検知: 30分連続バースト重視】"
+                # 30分間（5分×6点）の移動平均を計算
+                df_filtered["rolling_mean"] = df_filtered["bps_A"].rolling(window=6, min_periods=1).mean()
+                # 5分後の通信量が急落していないか確認するための先読みデータ
+                df_filtered["next_bps"] = df_filtered["bps_A"].shift(-1).fillna(df_filtered["bps_A"])
+                # 移動平均が上位5%かつ、現在も5分後も高負荷(15Mbps超)が維持されている点をバーストと判定
+                threshold = df_filtered["rolling_mean"].quantile(0.95)
+                anomalies = df_filtered[
+                    (df_filtered["rolling_mean"] >= threshold) &
+                    (df_filtered["bps_A"] > 15_000_000) &
+                    (df_filtered["next_bps"] > 15_000_000)
+                ]
+
+            else:
+                title_prefix = "【異常検知: 総合外れ値】"
+                # 全体のトラフィックの平均値と標準偏差（σ）を使った統計的Zスコアモデル
+                mean_bps = df_filtered["bps_A"].mean()
+                std_bps = df_filtered["bps_A"].std()
+                if std_bps > 0:
+                    df_filtered["z_score"] = (df_filtered["bps_A"] - mean_bps) / std_bps
+                else:
+                    df_filtered["z_score"] = 0
+                # 平均から2.55σ（概ね上位1%未満の外れ値）離れた高トラフィックを検知
+                anomalies = df_filtered[(df_filtered["z_score"] > 2.55) & (df_filtered["bps_A"] > 20_000_000)]
+
+            # 🔴 異常値ポイントを赤ドットでプロット
+            if not anomalies.empty:
+                ax.scatter(anomalies.index, anomalies["bps_A"], color="red", s=15, zorder=5, label="Anomaly")
+
+            ax.set_xlim(0, len(df_filtered) - 1)
+            tick_indices = [0, len(df_filtered)//4, len(df_filtered)//2, (len(df_filtered)*3)//4, len(df_filtered)-1]
+            tick_labels = [df_filtered["日時"].iloc[i].strftime(x_tick_format) for i in tick_indices if i < len(df_filtered)]
+            ax.set_xticks(tick_indices)
+            ax.set_xticklabels(tick_labels, rotation=30, ha="right")
+        else:
+            ax.text(0.5, 0.5, "データがありません", ha="center", va="center", color="red")
+            title_prefix = "【異常検知】"
+
+        max_val = df_filtered["bps_A"].max() if not df_filtered.empty else 0
+        if max_val >= 1_000_000:
+            ax.get_yaxis().set_major_formatter(matplotlib.ticker.FuncFormatter(lambda x, p: f"{x / 1_000_000:,.1f} M"))
+            ax.set_ylabel("転送速度 (Mbps)")
+        elif max_val >= 1_000:
+            ax.get_yaxis().set_major_formatter(matplotlib.ticker.FuncFormatter(lambda x, p: f"{x / 1_000:,.0f} K"))
+            ax.set_ylabel("転送速度 (Kbps)")
+        else:
+            ax.get_yaxis().set_major_formatter(matplotlib.ticker.StrMethodFormatter("{x:,.0f}"))
+            ax.set_ylabel("転送速度 (bps)")
+
+        ax.set_title(f"{title_prefix} {switch}: {filename.replace('.csv', '')}", fontsize=11, loc="left", color="darkred")
+        ax.set_xlabel(x_label_text)
+    except Exception as e:
+        traceback.print_exc()
+        ax.text(0.5, 0.5, f"Error: {type(e).__name__}", ha="center", va="center", color="red")
+
+    fig.legend(bbox_to_anchor=(0.13, -0.04), loc='lower left', ncol=2, frameon=True)
+    plt.subplots_adjust(bottom=0.25)
+    fig.tight_layout()
+
+    img = io.BytesIO()
+    await run_in_threadpool(fig.savefig, img, format="png", bbox_inches="tight", dpi=120)
+    img.seek(0)
+    fig.clear()
+    return StreamingResponse(img, media_type="image/png")
+
+"""
 @app.get("/plot_anomaly")
 async def plot_anomaly(
     base_id: Optional[str] = None, # 💡 追加
@@ -659,7 +845,7 @@ async def plot_anomaly(
     img.seek(0)
     fig.clear()
     return StreamingResponse(img, media_type="image/png")
-
+"""
 
 if __name__ == "__main__":
     import uvicorn
