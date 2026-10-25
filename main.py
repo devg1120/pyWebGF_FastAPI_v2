@@ -31,6 +31,9 @@ from fastapi.concurrency import run_in_threadpool
 #from merlion.models.anomaly.stat_threshold import StatThreshold, StatThresholdConfig
 #from merlion.post_process.threshold import AggregateAlarms
 
+# 💡 外部ファイルから異常検知マネージャーをインポート
+from detectors import AnomalyDetectors
+
 # ─── OS自動判定による日本語文字化け対策 ───
 matplotlib.use("Agg")
 current_os = platform.system()
@@ -520,6 +523,7 @@ async def anomaly_dashboard(
             "selected_start_dd": start_dd,
             "selected_end_dd": end_dd,
             "selected_switch": switch,
+            "logics": AnomalyDetectors.get_available_logics(),
             "selected_logic": logic,  
             "start_hour": start_hour,
             "end_hour": end_hour,
@@ -528,6 +532,132 @@ async def anomaly_dashboard(
     )
 
 
+@app.get("/plot_anomaly")
+async def plot_anomaly(
+    base_id: Optional[str] = None,
+    mode: str = "range", yyyymm: Optional[str] = None, dd: Optional[str] = None,
+    switch: Optional[str] = None, filename: Optional[str] = None, cols: int = 2,
+    start_hour: int = 8, end_hour: int = 18, start_dd: str = "", end_dd: str = "",
+    logic: str = "stat_threshold",
+):
+    actual_base = get_base_dir_path(base_id)
+
+    fig_size = (14, 4.0) if cols == 1 else (6, 2.8) if cols == 4 else (8, 3.0)
+    fig = Figure(figsize=fig_size)
+    ax = fig.subplots()
+
+    df_filtered = pd.DataFrame()
+
+    try:
+        df_list = []
+        if start_dd and end_dd:
+            dr = pd.date_range(start=start_dd, end=end_dd)
+            for d in dr:
+                file_path = os.path.join(actual_base, d.strftime("%Y%m"), d.strftime("%d"), switch, filename)
+                if os.path.exists(file_path):
+                    _df = await run_in_threadpool(pd.read_csv, file_path, engine="c")
+                    if not _df.empty:
+                        df_list.append(_df)
+
+            if df_list:
+                df = pd.concat(df_list, ignore_index=True)
+            else:
+                raise FileNotFoundError("データファイルが見つかりません。")
+
+            start_time = pd.to_datetime(start_dd) + pd.Timedelta(hours=start_hour)
+            end_time = pd.to_datetime(end_dd) + pd.Timedelta(hours=end_hour, minutes=55)
+            x_label_text = f"{start_dd} ～ {end_dd}"
+            x_tick_format = "%m/%d %H:%M"
+        else:
+            raise ValueError("期間指定が必要です。")
+
+        if len(df.columns) >= 6:
+            df.columns = ["日時", "INDEX", "NAME", "STATUS", "項目A", "項目B"] + list(df.columns[6:])
+        elif len(df.columns) >= 3:
+            df.columns = ["日時", "項目A", "項目B"] + list(df.columns[3:])
+
+        df["日時"] = pd.to_datetime(df["日時"], format="mixed", errors='coerce')
+        df = df.dropna(subset=["日時"])
+        df = df[(df["日時"] >= start_time) & (df["日時"] <= end_time)]
+        df = df.sort_values("日時").reset_index(drop=True)
+
+        time_diff_sec = df["日時"].diff().dt.total_seconds()
+        is_missing = time_diff_sec > 330
+
+        df["差分A"] = df["項目A"].diff().clip(lower=0)
+        df.loc[is_missing, "差过A"] = None
+
+        df["bps_A"] = (df["差分A"] * 8) / 300
+        df = df.dropna(subset=["bps_A"]).reset_index(drop=True)
+
+        fig.set_facecolor("#f0f0f0")
+        ax.set_facecolor("#ffffff")
+
+        if not df.empty:
+            df = df[~df["日時"].duplicated(keep='first')].reset_index(drop=True)
+
+            max_points = 1000
+            if len(df) > max_points:
+                step = len(df) // max_points
+                df_filtered = df.iloc[::step].copy().reset_index(drop=True)
+            else:
+                df_filtered = df.copy()
+
+            # 通常のトラフィック線（緑色）をプロット
+            ax.plot(df_filtered.index, df_filtered["bps_A"], color="#006600", linewidth=0.8, label="In (bps)")
+            ax.fill_between(df_filtered.index, df_filtered["bps_A"], color="#00eb0c", alpha=0.4)
+
+            # ─── 🧠 💡【外部ファイル化】ロジック呼び出しを1行に集約 ───
+            # logic に応じたパーセンタイル閾値の自動決定
+            percentile_val = 0.95 if logic == "burst_detector" else 0.98 if logic == "z_score_outlier" else 0.99
+
+            # 外部モジュール（detectors.py）を実行して赤ドット（異常値）の行を取得
+            anomalies = AnomalyDetectors.detect(logic, df_filtered, percentile_val)
+
+            # グラフ左上に表示する日本語タイトルを外部定義から自動取得
+            title_prefix = AnomalyDetectors.get_available_logics().get(logic, "【異常検知】")
+
+            # 🔴 異常値ポイントを赤ドットでプロット
+            if not anomalies.empty:
+                ax.scatter(anomalies.index, anomalies["bps_A"], color="red", s=15, zorder=5, label="Anomaly")
+
+            ax.set_xlim(0, len(df_filtered) - 1)
+            tick_indices = [0, len(df_filtered)//4, len(df_filtered)//2, (len(df_filtered)*3)//4, len(df_filtered)-1]
+            tick_labels = [df_filtered["日時"].iloc[i].strftime(x_tick_format) for i in tick_indices if i < len(df_filtered)]
+            ax.set_xticks(tick_indices)
+            ax.set_xticklabels(tick_labels, rotation=30, ha="right")
+        else:
+            ax.text(0.5, 0.5, "データがありません", ha="center", va="center", color="red")
+            title_prefix = "【異常検知】"
+
+        max_val = df_filtered["bps_A"].max() if not df_filtered.empty else 0
+        if max_val >= 1_000_000:
+            ax.get_yaxis().set_major_formatter(matplotlib.ticker.FuncFormatter(lambda x, p: f"{x / 1_000_000:,.1f} M"))
+            ax.set_ylabel("転送速度 (Mbps)")
+        elif max_val >= 1_000:
+            ax.get_yaxis().set_major_formatter(matplotlib.ticker.FuncFormatter(lambda x, p: f"{x / 1_000:,.0f} K"))
+            ax.set_ylabel("転送速度 (Kbps)")
+        else:
+            ax.get_yaxis().set_major_formatter(matplotlib.ticker.StrMethodFormatter("{x:,.0f}"))
+            ax.set_ylabel("転送速度 (bps)")
+
+        ax.set_title(f"{title_prefix} {switch}: {filename.replace('.csv', '')}", fontsize=11, loc="left", color="darkred")
+        ax.set_xlabel(x_label_text)
+    except Exception as e:
+        traceback.print_exc()
+        ax.text(0.5, 0.5, f"Error: {type(e).__name__}", ha="center", va="center", color="red")
+
+    fig.legend(bbox_to_anchor=(0.13, -0.04), loc='lower left', ncol=2, frameon=True)
+    plt.subplots_adjust(bottom=0.25)
+    fig.tight_layout()
+
+    img = io.BytesIO()
+    await run_in_threadpool(fig.savefig, img, format="png", bbox_inches="tight", dpi=120)
+    img.seek(0)
+    fig.clear()
+    return StreamingResponse(img, media_type="image/png")
+
+"""
 @app.get("/plot_anomaly")
 async def plot_anomaly(
     base_id: Optional[str] = None,
@@ -679,6 +809,7 @@ async def plot_anomaly(
     img.seek(0)
     fig.clear()
     return StreamingResponse(img, media_type="image/png")
+"""
 
 """
 @app.get("/plot_anomaly")
