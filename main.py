@@ -1,3 +1,7 @@
+import warnings
+# 将来の仕様変更に関する警告（FutureWarning）をすべて無視する
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
 import io
 import glob
 import os
@@ -47,10 +51,10 @@ templates.env.filters["urldecode"] = urllib.parse.unquote
 
 # ─── 💡 【マルチ化】動的切替用のマッピング辞書 ───
 BASE_DIRS = {
-    "default": "./gen_csv/month_data_build/test",
-    "test2": "./gen_csv/month_data_build/test2",
-    "test3": "./gen_csv/month_data_build/test3",
-    "mokka21_snmp": "/sclog/tmp/_snmp/data",
+    "default": "./test_data/test1",
+    "test2": "./test_data/test2",
+    "test3": "./test_data/test3",
+    "test4": "./test_data/test4",
     # "customer_a": "./gen_csv/month_data_build/customer_a", # 必要に応じて追加
 }
 
