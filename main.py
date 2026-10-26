@@ -54,18 +54,22 @@ templates.env.filters["urldecode"] = urllib.parse.unquote
 
 # ─── 💡 【マルチ化】動的切替用のマッピング辞書 ───
 BASE_DIRS = {
-    "default": "./test_data/test1",
+    #"default": "./test_data/test1",
+    "test1": "./test_data/test1",
     "test2": "./test_data/test2",
     "test3": "./test_data/test3",
     "test4": "./test_data/test4",
     # "customer_a": "./gen_csv/month_data_build/customer_a", # 必要に応じて追加
 }
+DEFAULT_DIR = "test1"
 
 def get_default_base_id() -> str:
     """ホスト名に基づきデフォルトのbase_idを決定するロジック"""
-    if gethostname() == "mokka21":
-        return "mokka21_snmp"
-    return "default"
+    #if gethostname() == "mokka21":
+    #    return "mokka21_snmp"
+    #return "default"
+    print("DEFAULT_DIR")
+    return DEFAULT_DIR
 
 def get_base_dir_path(base_id: Optional[str] = None) -> str:
     """指定されたbase_idから実際の物理ディレクトリパスを安全に解決する"""
@@ -367,7 +371,7 @@ async def plot_graph(
 
 
         ax.get_yaxis().get_offset_text().set_visible(False)
-        ax.set_title(f"{switch}: {filename.replace('.csv', '')}  {g_speed}", fontsize=11, loc="left")
+        ax.set_title(f"[{base_id}] {switch}: {filename.replace('.csv', '')}  {g_speed}", fontsize=11, loc="left")
         ax.set_title(desc, fontsize=10, loc="right", color="#000000")
         ax.set_xlabel(x_label_text)
 
@@ -407,7 +411,7 @@ async def dashboard(
         request=request,
         name="dashboard.html",
         context={
-            "base_id": list(BASE_DIRS.keys()),     # 💡 追加
+            "base_ids": list(BASE_DIRS.keys()),     # 💡 追加
             "selected_base_id": base_id,            # 💡 追加
             "registry": DASHBOARD_REGISTRY, "date_tree": date_tree,
             "current_mode": mode, "selected_start_dd": start_dd, "selected_end_dd": end_dd,

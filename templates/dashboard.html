@@ -129,7 +129,7 @@
     <ul id="dashboard-toc" style="font-size: 14px; line-height: 1.6; color: #555;">
         {% for item in registry %}
         {% set ns_if = item.filename | replace('.csv','') %}
-        <li><a href="#chart-card-{{ loop.index0 }}" style="color: #0066cc; text-decoration: none;">[{{ item.switch }}] # {{ ns_if }} {{ item.desc }}</a></li>
+	<li><a href="#chart-card-{{ loop.index0 }}" style="color: #0066cc; text-decoration: none;">[{{item.base_id}} {{ item.switch }}] # {{ ns_if }} {{ item.desc }}</a></li>
         {% endfor %}
     </ul>
     <!-- ─── グラフ描画グリッドエリア ─── -->
@@ -140,7 +140,12 @@
         <!-- 列数設定（selected_cols）に応じてクラスを動的に付与 -->
         <div class="chart-card cols-{{ selected_cols }}" id="chart-card-{{ loop.index0 }}" data-search-text="{{ item.switch }} {{ ns_if }} {{ item.desc }}">
             <div class="chart-header">
+               <div style="display:flex;">
+		<button type="button" class="base-id" style="background-color: #0080ff; color: #ffffff; border: 1px solid #0080ff;" disabled>{{item.base_id}}</button>
+		&ensp;
+
                 <h5 class="chart-title">[{{ item.switch }}] # {{ ns_if }} {% if item.desc %}({{ item.desc }}){% endif %}</h5>
+               </div>
                 
                 <!-- 削除フォーム -->
                 <form action="/dashboard/delete" method="POST" style="margin: 0;">
