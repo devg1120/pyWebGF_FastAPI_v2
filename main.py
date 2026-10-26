@@ -407,7 +407,7 @@ async def dashboard(
         request=request,
         name="dashboard.html",
         context={
-            "base_ids": list(BASE_DIRS.keys()),     # 💡 追加
+            "base_id": list(BASE_DIRS.keys()),     # 💡 追加
             "selected_base_id": base_id,            # 💡 追加
             "registry": DASHBOARD_REGISTRY, "date_tree": date_tree,
             "current_mode": mode, "selected_start_dd": start_dd, "selected_end_dd": end_dd,
