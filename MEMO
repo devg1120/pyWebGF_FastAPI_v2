@@ -2,6 +2,7 @@
 
 
 pip install fastapi uvicorn jinja2 python-multipart pandas matplotlib natsort
+pip install --upgrade fastapi starlette jinja2
 
 # Merlion 対応中止
 
