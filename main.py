@@ -57,8 +57,8 @@ BASE_DIRS = {
     #"default": "./test_data/test1",
     "test1": "./test_data/test1",
     "test2": "./test_data/test2",
-    "test3": "./test_data/test3",
-    "test4": "./test_data/test4",
+    #"test3": "./test_data/test3",
+    #"test4": "./test_data/test4",
     # "customer_a": "./gen_csv/month_data_build/customer_a", # 必要に応じて追加
 }
 DEFAULT_DIR = "test1"
