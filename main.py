@@ -388,6 +388,7 @@ async def plot_graph(
     img.seek(0)
     fig.clear()
     return StreamingResponse(img, media_type="image/png")
+
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(
     request: Request, 
@@ -439,6 +440,21 @@ async def dashboard_delete(index: int = Form(...), base_id: str = Form("default"
         DASHBOARD_REGISTRY.pop(index)
     return RedirectResponse(url=f"/dashboard?base_id={base_id}", status_code=status.HTTP_303_SEE_OTHER)
 
+@app.post("/dashboard/moveup")
+async def dashboard_moveup(index: int = Form(...), base_id: str = Form("default")):
+    if 0 <= index < len(DASHBOARD_REGISTRY):
+        if 0 < index :
+            item = DASHBOARD_REGISTRY.pop(index)
+            DASHBOARD_REGISTRY.insert(index - 1, item)
+    return RedirectResponse(url=f"/dashboard?base_id={base_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+@app.post("/dashboard/movedown")
+async def dashboard_movedown(index: int = Form(...), base_id: str = Form("default")):
+    if 0 <= index < len(DASHBOARD_REGISTRY):
+        if  index < len(DASHBOARD_REGISTRY) -1:
+            item = DASHBOARD_REGISTRY.pop(index)
+            DASHBOARD_REGISTRY.insert(index + 1 , item)
+    return RedirectResponse(url=f"/dashboard?base_id={base_id}", status_code=status.HTTP_303_SEE_OTHER)
 
 @app.get("/anomaly_dashboard", response_class=HTMLResponse)
 async def anomaly_dashboard(
